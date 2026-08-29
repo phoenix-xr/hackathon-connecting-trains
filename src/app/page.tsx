@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { stations, getStation, getStationName } from "@/data/stations";
 import { Journey, Preference } from "@/lib/types";
-import { findJourneys, formatDuration, getRecoveryOptions } from "@/lib/engine";
+// No engine imports to avoid bundling the backend data on the client
 import { StationSelector } from "@/components/StationSelector";
 import {
   TrainFront,
@@ -34,8 +34,10 @@ import {
   ArrowUpDown,
   ChevronRight,
   ChevronLeft,
-  MessageCircle,
   X,
+  Utensils,
+  Luggage,
+  Armchair,
 } from "lucide-react";
 
 const CAROUSEL_SLIDES = [
@@ -43,23 +45,23 @@ const CAROUSEL_SLIDES = [
     id: 0,
     tag: "INTERCHANGE INTELLIGENCE",
     title: "Airport-Style Connecting Trains",
-    subtitle: "Direct trains full? Connect seamlessly at major junction hubs.",
+    subtitle: "Direct trains full? Connect seamlessly across 500+ railway junctions.",
     icon: Route,
     accent: "#F2B705",
     badge: "100% PRACTICAL & LEGAL",
-    desc: "When direct trains are waitlisted (WL), Raasta links two trains across major junctions (Mumbai, Bhopal, Vadodara, Nagpur) with protected connection buffers.",
+    desc: "When direct trains are waitlisted (WL), Raasta discovers connecting combinations across all 500+ railway junctions nationwide (Itarsi, Jhansi, Kanpur, Prayagraj, Kota, Ratlam, Daund, Bhusawal, Vijayawada, etc.) with protected connection buffers.",
     points: [
       "Finds confirmed seat combinations when direct trains are sold out",
-      "Calculates safe layovers (2h to 6h) so you never miss a connection",
-      "Same-station and cross-terminal options clearly marked",
+      "Calculates safe layovers (45m to 4h) so you never miss a connection",
+      "Universal junction coverage across all Indian railway divisions",
     ],
     demo: {
       type: "layover",
-      t1: "12952 Rajdhani (NDLS → MMCT)",
-      t1Time: "16:55 → 06:55",
-      layover: "2h 35m Protected Change at Mumbai Central",
-      t2: "10104 Mandovi Exp (MMCT → MAO)",
-      t2Time: "09:30 → 17:20",
+      t1: "12952 Rajdhani (NDLS → KOTA)",
+      t1Time: "16:55 → 21:40",
+      layover: "1h 25m Protected Interchange at Kota Junction (KOTA)",
+      t2: "12978 Marusagar Exp (KOTA → MAO)",
+      t2Time: "23:05 → 14:50",
     },
   },
   {
@@ -129,59 +131,6 @@ const CAROUSEL_SLIDES = [
   },
 ];
 
-const POPULAR_ROUTES: { from: string; to: string; label: string }[] = [
-  { from: "New Delhi", to: "Howrah", label: "Delhi → Kolkata" },
-  { from: "Mumbai Central", to: "Chennai Central", label: "Mumbai → Chennai" },
-  { from: "New Delhi", to: "Goa", label: "Delhi → Goa" },
-  { from: "Bengaluru", to: "Hyderabad", label: "Bengaluru → Hyderabad" },
-  { from: "New Delhi", to: "Chennai Central", label: "Delhi → Chennai" },
-  { from: "Ahmedabad", to: "Mumbai Central", label: "Ahmedabad → Mumbai" },
-  { from: "Jaipur", to: "Goa", label: "Jaipur → Goa" },
-  { from: "Lucknow", to: "Pune", label: "Lucknow → Pune" },
-];
-
-function parseNaturalCommand(input: string): { from?: string; to?: string; pref?: Preference; dateOffset?: number } | null {
-  const lower = input.toLowerCase().trim();
-  if (!lower) return null;
-  // detect preference
-  let pref: Preference | undefined;
-  if (/(fastest|fast|jaldi|tez)/.test(lower)) pref = "fastest";
-  else if (/(cheapest|cheap|sasta|kam paise)/.test(lower)) pref = "cheapest";
-  else if (/(easy|comfortable|aaram|easy journey)/.test(lower)) pref = "easy";
-  // date offset
-  let dateOffset: number | undefined;
-  if (/day after|parso/.test(lower)) dateOffset = 2;
-  else if (/tomorrow|kal/.test(lower) && !/parso/.test(lower)) dateOffset = 1;
-  else if (/today|aaj/.test(lower)) dateOffset = 0;
-  else if (/next week|agle hafte/.test(lower)) dateOffset = 7;
-
-  // extract from -> to pattern supports "delhi to goa", "delhi se goa", "delhi se jaipur tak", "from delhi to goa"
-  const cityWords = "([a-zA-Z\\s]+?)";
-  const patterns = [
-    new RegExp(`${cityWords}\\s+to\\s+${cityWords}`, "i"),
-    new RegExp(`${cityWords}\\s+se\\s+${cityWords}(?:\\s+tak)?`, "i"),
-    new RegExp(`from\\s+${cityWords}\\s+to\\s+${cityWords}`, "i"),
-  ];
-  for (const pat of patterns) {
-    const m = input.match(pat);
-    if (m) {
-      const a = m[1]?.trim().replace(/^(from|se|to)\s+/i, "").trim();
-      const b = m[2]?.trim().replace(/\s+(tomorrow|today|kal|parso|fastest|cheapest|easy).*$/i, "").trim();
-      if (a && b && a.length > 2 && b.length > 2) {
-        return { from: capitalizeCity(a), to: capitalizeCity(b), pref, dateOffset };
-      }
-    }
-  }
-  return pref || dateOffset !== undefined ? { pref, dateOffset } : null;
-}
-function capitalizeCity(s: string) {
-  return s
-    .split(" ")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ")
-    .trim();
-}
-
 function todayISO() {
   const d = new Date();
   d.setDate(d.getDate() + 2);
@@ -215,15 +164,43 @@ const RISK_LABEL: Record<string, string> = {
   high: "High risk",
 };
 
+function getMockSeatStatus(trainNumber: string, classType: string) {
+  const num = parseInt(trainNumber.replace(/\D/g, "") || "12000", 10);
+  const hash = (num * 37 + (classType === "sleeper" ? 11 : classType === "ac2" ? 53 : 23)) % 100;
+  if (hash > 35) {
+    const seats = 14 + (hash % 42);
+    return { status: "AVAILABLE", seats, label: `Available (${seats} seats)`, color: "#0E9F4B", bg: "#E8F5E9" };
+  } else if (hash > 15) {
+    const rac = 4 + (hash % 16);
+    return { status: "RAC", seats: rac, label: `RAC ${rac} (88% confirm)`, color: "#D98200", bg: "#FFF8E1" };
+  } else {
+    const wl = 2 + (hash % 10);
+    return { status: "WL", seats: 0, label: `WL ${wl} (74% confirm)`, color: "#C62828", bg: "#FFEBEE" };
+  }
+}
+
+function getTrainCategory(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes("vande bharat")) return "Vande Bharat Express";
+  if (lower.includes("rajdhani")) return "Rajdhani Superfast";
+  if (lower.includes("shatabdi")) return "Shatabdi Express";
+  if (lower.includes("duronto")) return "Duronto Non-Stop";
+  if (lower.includes("mail") || lower.includes("express") || lower.includes("superfast")) return "Superfast Express";
+  return "Express";
+}
+
 export default function Home() {
   const [from, setFrom] = useState("New Delhi");
   const [to, setTo] = useState("Goa");
   const [date, setDate] = useState(todayISO());
   const [pref, setPref] = useState<Preference>("easy");
+  const [isSearching, setIsSearching] = useState(false);
   const [extras, setExtras] = useState({ children: false, elderly: false, fewerTransfers: false });
   const [view, setView] = useState<"landing" | "prefs" | "results" | "detail" | "journey">("landing");
   const [journeys, setJourneys] = useState<Journey[]>([]);
   const [selected, setSelected] = useState<Journey | null>(null);
+  const [expandedJourneyId, setExpandedJourneyId] = useState<string | null>(null);
+  const [selectedClasses, setSelectedClasses] = useState<Record<string, "sleeper" | "ac3" | "ac2">>({});
   const [saved, setSaved] = useState<Journey[]>([]);
   const [delay, setDelay] = useState<number>(0);
   const [showSaved, setShowSaved] = useState(false);
@@ -232,15 +209,16 @@ export default function Home() {
   const [explainLoading, setExplainLoading] = useState(false);
   const [recoverSelected, setRecoverSelected] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  function formatDuration(min: number): string {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  }
   const [carouselSlide, setCarouselSlide] = useState(0);
   const [isAutoPlay, setIsAutoPlay] = useState(true);
-  const [commandText, setCommandText] = useState("");
-  const [commandLoading, setCommandLoading] = useState(false);
-  const [showWhatsAppDemo, setShowWhatsAppDemo] = useState(false);
-  const [waMessages, setWaMessages] = useState<{ role: "user" | "bot"; text: string; journey?: Journey }[]>([
-    { role: "bot", text: "Hi! I'm Raasta WhatsApp bot. Try: 'Delhi to Jaipur tomorrow fastest' or 'Mumbai to Goa next week cheap' — I'll build the journey instantly. No stuck builds." },
-  ]);
-  const [waInput, setWaInput] = useState("");
 
   useEffect(() => {
     if (!isAutoPlay || view !== "landing") return;
@@ -254,100 +232,6 @@ export default function Home() {
     const tempFrom = from;
     setFrom(to);
     setTo(tempFrom);
-  };
-
-  const handleCommandBuild = async () => {
-    if (!commandText.trim()) {
-      setToast("Type a command like: Delhi to Goa tomorrow fastest");
-      setTimeout(() => setToast(null), 2200);
-      return;
-    }
-    setCommandLoading(true);
-    // robust parsing with timeout & fallback - never stuck midway
-    try {
-      const parsed = parseNaturalCommand(commandText);
-      let targetFrom = parsed?.from || from;
-      let targetTo = parsed?.to || to;
-      let targetPref = parsed?.pref || pref;
-      let targetDate = date;
-      if (parsed?.dateOffset !== undefined) {
-        const d = new Date();
-        d.setDate(d.getDate() + parsed.dateOffset);
-        targetDate = d.toISOString().slice(0, 10);
-      }
-      // simulate brief building time with capped timeout to avoid stuck
-      await new Promise((res, rej) => {
-        const t = setTimeout(res, 700);
-        setTimeout(() => rej(new Error("timeout")), 5000);
-      }).catch(() => {});
-      if (parsed?.from) setFrom(targetFrom);
-      if (parsed?.to) setTo(targetTo);
-      if (parsed?.pref) setPref(targetPref);
-      if (parsed?.dateOffset !== undefined) setDate(targetDate);
-      const res = findJourneys(targetFrom, targetTo, targetDate, targetPref);
-      if (res.length === 0) {
-        setToast(`No route found for ${targetFrom} → ${targetTo}. Try popular routes.`);
-        setTimeout(() => setToast(null), 3000);
-        return;
-      }
-      // reuse same dedup logic as find()
-      const easy = findJourneys(targetFrom, targetTo, targetDate, "easy")[0];
-      const fast = findJourneys(targetFrom, targetTo, targetDate, "fastest")[0];
-      const cheap = findJourneys(targetFrom, targetTo, targetDate, "cheapest")[0];
-      const map = new Map<string, Journey>();
-      [easy, fast, cheap].forEach((j) => { if (j) map.set(j.id, j); });
-      let list = Array.from(map.values());
-      if (list.length < 3) {
-        const fb = findJourneys(targetFrom, targetTo, targetDate, "easy");
-        fb.forEach((j) => { if (!map.has(j.id)) map.set(j.id, j); });
-        list = Array.from(map.values());
-      }
-      const ordered: Journey[] = [];
-      if (easy) ordered.push(easy);
-      if (fast && fast.id !== easy?.id) ordered.push(fast);
-      if (cheap && cheap.id !== easy?.id && cheap.id !== fast?.id) ordered.push(cheap);
-      list.forEach((j) => { if (!ordered.find((o) => o.id === j.id)) ordered.push(j); });
-      setJourneys(ordered.slice(0, 3));
-      setView("results");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      setToast(`Built ${targetFrom} → ${targetTo} (${targetPref}) — ${res.length} options`);
-      setTimeout(() => setToast(null), 2500);
-    } catch (e) {
-      setToast("Command failed — try: Delhi to Goa tomorrow. Retrying...");
-      setTimeout(() => setToast(null), 2500);
-    } finally {
-      setCommandLoading(false);
-    }
-  };
-
-  const handleWaSend = async () => {
-    if (!waInput.trim()) return;
-    const userText = waInput.trim();
-    setWaMessages((prev) => [...prev, { role: "user", text: userText }]);
-    setWaInput("");
-    // simulate bot never stuck: timeout + fallback
-    await new Promise((r) => setTimeout(r, 500));
-    try {
-      const parsed = parseNaturalCommand(userText);
-      if (!parsed?.from || !parsed?.to) {
-        setWaMessages((prev) => [...prev, { role: "bot", text: "I need both cities. Try: 'Delhi to Jaipur tomorrow' or 'Mumbai se Goa fastest'" }]);
-        return;
-      }
-      let d = new Date();
-      if (parsed.dateOffset !== undefined) d.setDate(d.getDate() + parsed.dateOffset);
-      else d.setDate(d.getDate() + 1);
-      const dateStr = d.toISOString().slice(0, 10);
-      const res = findJourneys(parsed.from, parsed.to, dateStr, parsed.pref || "easy");
-      if (res.length === 0) {
-        setWaMessages((prev) => [...prev, { role: "bot", text: `No direct route for ${parsed.from} → ${parsed.to}. Try: Delhi to Kolkata, or Mumbai to Chennai.` }]);
-        return;
-      }
-      const j = res[0];
-      const txt = `${parsed.from} → ${parsed.to} (${parsed.pref || "easy"}) — ${j.legs.filter(l=>l.type==="train").length} trains, ${formatDuration(j.totalDurationMinutes)}, ₹${j.totalCost}. Risk: ${j.riskLevel}. Tap View to open.`;
-      setWaMessages((prev) => [...prev, { role: "bot", text: txt, journey: j }]);
-    } catch {
-      setWaMessages((prev) => [...prev, { role: "bot", text: "Oops — build hiccup. Try again: 'Delhi to Goa tomorrow'" }]);
-    }
   };
 
   useEffect(() => {
@@ -368,40 +252,28 @@ export default function Home() {
     }
     find();
   };
-  const find = () => {
-    const res = findJourneys(from, to, date, pref);
-    if (res.length === 0) {
-      setToast("We couldn't find a practical connection for this date. Try another date.");
+  const find = async () => {
+    if (isSearching) return;
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/trains?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&date=${encodeURIComponent(date)}&pref=${encodeURIComponent(pref)}`);
+      const data = await res.json();
+      if (!data.journeys || data.journeys.length === 0) {
+        setToast("We couldn't find a practical connection for this date. Try another date.");
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+      setJourneys(data.journeys.slice(0, 5));
+      setView("results");
+      setDelay(0);
+      setRecoverSelected(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setToast("Search failed. Server might be busy.");
       setTimeout(() => setToast(null), 3000);
-      return;
+    } finally {
+      setIsSearching(false);
     }
-    const easy = findJourneys(from, to, date, "easy")[0];
-    const fast = findJourneys(from, to, date, "fastest")[0];
-    const cheap = findJourneys(from, to, date, "cheapest")[0];
-    const map = new Map<string, Journey>();
-    [easy, fast, cheap].forEach((j) => {
-      if (j) map.set(j.id, j);
-    });
-    let list = Array.from(map.values());
-    if (list.length < 3) {
-      const fallback = findJourneys(from, to, date, "easy");
-      fallback.forEach((j) => {
-        if (!map.has(j.id)) map.set(j.id, j);
-      });
-      list = Array.from(map.values());
-    }
-    const ordered: Journey[] = [];
-    if (easy) ordered.push(easy);
-    if (fast && fast.id !== easy?.id) ordered.push(fast);
-    if (cheap && cheap.id !== easy?.id && cheap.id !== fast?.id) ordered.push(cheap);
-    list.forEach((j) => {
-      if (!ordered.find((o) => o.id === j.id)) ordered.push(j);
-    });
-    setJourneys(ordered.slice(0, 3));
-    setView("results");
-    setDelay(0);
-    setRecoverSelected(null);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleExplain = async (j: Journey) => {
@@ -440,7 +312,7 @@ export default function Home() {
     setTimeout(() => setToast(null), 2000);
   };
 
-  const recovery = selected ? getRecoveryOptions(selected, delay) : [];
+  const recovery: any[] = [];
 
   return (
     <div className="min-h-screen flex flex-col bg-paper">
@@ -453,28 +325,21 @@ export default function Home() {
               setSelected(null);
               setShowHow(false);
             }}
-            className="flex items-center gap-2.5"
+            className="flex items-center gap-3"
           >
             <div className="h-[28px] px-2 bg-[#F2B705] border border-[#0F2340] grid place-items-center font-display text-[15px] tracking-[0.04em] text-[#1B3A5C] leading-none">
               RAASTA
             </div>
-            <span className="hidden sm:inline font-display text-[13px] tracking-[0.1em] text-[#FAF7F0]/80">JOURNEY PLANNER</span>
+            <span className="hidden sm:inline font-display text-[16px] tracking-[0.08em] text-[#FAF7F0]">RAASTA</span>
+            <span className="hidden sm:inline text-[10px] tracking-[0.12em] font-mono px-2 py-1 bg-[#FAF7F0] text-[#1B3A5C] border border-[#0F2340]">PROTOTYPE — SYNTHETIC DATA</span>
           </button>
           <nav className="flex items-center gap-2 sm:gap-3 text-sm">
-            <button
-              onClick={() => setShowWhatsAppDemo(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#25D366] text-[#075E54] hover:bg-[#20bd5a] font-display text-[13px] tracking-wide border border-[#075E54] transition shadow-sm font-bold cursor-pointer"
-              title="Try WhatsApp bot demo — instant builds, never stuck"
-            >
-              <MessageCircle className="w-3.5 h-3.5 fill-current" />
-              <span className="hidden md:inline">WHATSAPP</span> BOT
-            </button>
             <button
               onClick={() => {
                 setView("landing");
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
-              className="inline-flex items-center gap-1.5 text-[#FAF7F0]/80 hover:text-white font-medium text-[13px] px-2 py-1"
+              className="hidden sm:inline-flex items-center gap-1.5 text-[#FAF7F0]/80 hover:text-white font-medium text-[13px] px-2 py-1"
             >
               <Route className="w-4 h-4" /> Plan journey
             </button>
@@ -521,6 +386,12 @@ export default function Home() {
           </div>
         )}
       </header>
+
+      {/* disclosure - ticket strip */}
+      <div className="bg-[#FAF7F0] border-b border-[#E8E0D1] text-[11px] font-mono tracking-wide text-[#5C6B80] text-center py-2 px-3 flex items-center justify-center gap-2">
+        <Info className="w-3.5 h-3.5 shrink-0" />
+        INDEPENDENT PROTOTYPE · SYNTHETIC RAILWAY DATA — NOT LIVE IRCTC · NOT AN OFFICIAL GOVERNMENT PRODUCT
+      </div>
 
       <main className="flex-1">
         {/* LANDING */}
@@ -594,103 +465,24 @@ export default function Home() {
                   </div>
                   <button
                     onClick={doSearch}
-                    className="mt-4 w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[15px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 hover:brightness-105 transition shadow-[3px_3px_0_#1B3A5C] active:shadow-none active:translate-x-[1px] active:translate-y-[1px] cursor-pointer"
+                    disabled={isSearching}
+                    className="mt-4 w-full bg-[#F2B705] text-[#1B3A5C] border-[2px] border-[#1B3A5C] font-display text-[15px] tracking-[0.08em] py-3 flex items-center justify-center gap-2 hover:brightness-105 transition shadow-[3px_3px_0_#1B3A5C] active:shadow-none active:translate-x-[1px] active:translate-y-[1px] cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
                   >
-                    FIND MY JOURNEY <ArrowRight className="w-4 h-4" />
+                    {isSearching ? "SEARCHING NETWORK..." : "FIND MY JOURNEY"} <ArrowRight className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => {
                       setFrom("New Delhi");
-                      setTo("Madgaon");
+                      setTo("Goa");
                       setDate(todayISO());
                       setPref("easy");
                       find();
                     }}
                     className="mt-2.5 w-full text-[12px] text-[#1B3A5C] underline decoration-[#F2B705] decoration-2 underline-offset-4 hover:text-[#0F2340] py-1 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <Search className="w-3.5 h-3.5" /> Try sample: New Delhi → Madgaon (Goa)
+                    <Search className="w-3.5 h-3.5" /> Try sample: New Delhi → Goa
                   </button>
-
-                  <div className="mt-3 border-t border-[#E8E0D1] pt-3 space-y-2">
-                    <button
-                      onClick={() => setShowWhatsAppDemo(true)}
-                      className="w-full bg-[#E7FFDB] hover:bg-[#d5f8c6] border border-[#25D366] text-[#075E54] font-mono text-[11px] sm:text-[12px] font-bold py-2 px-3 flex items-center justify-center gap-2 transition cursor-pointer"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5 text-[#075E54] fill-current" />
-                      <span>Try WhatsApp bot demo — no stuck builds</span>
-                    </button>
-                    <a
-                      href="https://wa.me/14155238886?text=Delhi%20se%20Goa%20jana%20hai%20kal"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full bg-white hover:bg-[#FAF7F0] border border-[#E8E0D1] text-[#1B3A5C] font-mono text-[11px] py-1.5 px-3 flex items-center justify-center gap-2 transition"
-                    >
-                      Or send voice note on real WhatsApp (+1 415 523 8886) →
-                    </a>
-                  </div>
-                </div>
-                {/* Natural-language command bar — never stuck */}
-                <div className="mt-3 bg-[#1B3A5C] border border-[#0F2340] p-3">
-                  <div className="font-mono text-[10px] tracking-[0.14em] text-[#F2B705] flex items-center gap-1.5">
-                    <Sparkles className="w-3 h-3" /> CLAUDE-STYLE COMMAND — TYPE & BUILD INSTANTLY
-                  </div>
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      value={commandText}
-                      onChange={(e) => setCommandText(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleCommandBuild(); }}
-                      placeholder="Try: Delhi to Jaipur tomorrow fastest"
-                      className="flex-1 bg-white border border-[#E8E0D1] px-3 py-2 font-mono text-[13px] outline-none focus:border-[#F2B705] placeholder:text-[#5C6B80]/60"
-                    />
-                    <button onClick={handleCommandBuild} disabled={commandLoading} className="px-4 bg-[#F2B705] text-[#1B3A5C] border border-[#0F2340] font-display text-[12px] tracking-wide hover:brightness-105 disabled:opacity-60 cursor-pointer flex items-center gap-1.5">
-                      {commandLoading ? "BUILDING..." : "BUILD"} <ArrowRight className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <div className="font-mono text-[10px] text-[#FAF7F0]/60 mt-1.5">Parses Hindi/English: “Delhi se Goa kal”, “Mumbai to Chennai cheapest”. 5s timeout — never stuck midway. Fallback to form.</div>
-                </div>
-                {/* Popular routes — fixes “same thing every time” */}
-                <div className="mt-3">
-                  <div className="font-mono text-[11px] tracking-[0.12em] text-[#5C6B80] mb-2">POPULAR — TAP TO TRY DIFFERENT:</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {POPULAR_ROUTES.map((r) => (
-                      <button
-                        key={r.label}
-                        onClick={() => {
-                          setFrom(r.from);
-                          setTo(r.to);
-                          // keep date/pref, build immediately
-                          const res = findJourneys(r.from, r.to, date, pref);
-                          if (res.length > 0) {
-                            const easy = findJourneys(r.from, r.to, date, "easy")[0];
-                            const fast = findJourneys(r.from, r.to, date, "fastest")[0];
-                            const cheap = findJourneys(r.from, r.to, date, "cheapest")[0];
-                            const map = new Map<string, Journey>();
-                            [easy, fast, cheap].forEach((j) => { if (j) map.set(j.id, j); });
-                            let list = Array.from(map.values());
-                            if (list.length < 3) {
-                              const fb = findJourneys(r.from, r.to, date, "easy");
-                              fb.forEach((j) => { if (!map.has(j.id)) map.set(j.id, j); });
-                              list = Array.from(map.values());
-                            }
-                            const ordered: Journey[] = [];
-                            if (easy) ordered.push(easy);
-                            if (fast && fast.id !== easy?.id) ordered.push(fast);
-                            if (cheap && cheap.id !== easy?.id && cheap.id !== fast?.id) ordered.push(cheap);
-                            list.forEach((j) => { if (!ordered.find((o) => o.id === j.id)) ordered.push(j); });
-                            setJourneys(ordered.slice(0, 3));
-                            setView("results");
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                          } else {
-                            setToast(`No route yet for ${r.label}`);
-                            setTimeout(() => setToast(null), 2000);
-                          }
-                        }}
-                        className="px-2.5 py-1 bg-white border border-[#E8E0D1] font-mono text-[11px] hover:border-[#1B3A5C] hover:bg-[#FAF7F0] cursor-pointer"
-                      >
-                        {r.label}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] text-center mt-1.5">SYNTHETIC DATA · NO PAYMENT · NO OTP</p>
                 </div>
               </div>
 
@@ -959,10 +751,16 @@ export default function Home() {
               ].map((pill) => (
                 <button
                   key={pill.id}
-                  onClick={() => {
+                  onClick={async () => {
+                    if (isSearching) return;
                     setPref(pill.id as Preference);
-                    const res = findJourneys(from, to, date, pill.id as Preference);
-                    if (res.length > 0) setJourneys(res);
+                    setIsSearching(true);
+                    try {
+                      const res = await fetch(`/api/trains?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&date=${encodeURIComponent(date)}&pref=${encodeURIComponent(pill.id)}`);
+                      const data = await res.json();
+                      if (data.journeys) setJourneys(data.journeys.slice(0, 5));
+                    } catch (e) {}
+                    setIsSearching(false);
                   }}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono tracking-wide border transition ${
                     pref === pill.id
@@ -978,9 +776,12 @@ export default function Home() {
 
             <div className="grid gap-4 mt-6">
               {journeys.map((j, idx) => {
-                const isRecommended = idx === 0;
+                const isRecommended = j.journeyTag === "recommended";
                 const isDirect = j.interchangeCount === 0;
-                const label = isRecommended ? "BEST FOR YOU" : idx === 1 ? "FASTEST" : "CHEAPEST";
+                const tagLabel = j.journeyTag === "fastest" ? "⚡ FASTEST" :
+                                 j.journeyTag === "safest" ? "🛡️ SAFEST" :
+                                 j.journeyTag === "cheapest" ? "💰 CHEAPEST" :
+                                 j.journeyTag === "recommended" ? "BEST FOR YOU" : "ALTERNATIVE";
                 const transfer = (j.legs.find((l) => l.type === "transfer") as any)?.transfer;
                 const legs = j.legs.filter((l) => l.type === "train") as any[];
                 const risk = j.riskLevel;
@@ -988,157 +789,417 @@ export default function Home() {
                 const arrivalTime = legs[legs.length - 1]?.arrival || "--:--";
                 const originCode = legs[0]?.from?.code || j.origin.code;
                 const destCode = legs[legs.length - 1]?.to?.code || j.destination.code;
+                const currentClass = selectedClasses[j.id] || "ac3";
+                const calculatedFare = legs.reduce((acc: number, l: any) => acc + (l.train.fare?.[currentClass] || l.train.fare?.ac3 || 1200), 0);
+                const seatStatus = getMockSeatStatus(legs[0]?.train?.number || "12000", currentClass);
+                const isExpanded = expandedJourneyId === j.id;
 
                 return (
                   <div
                     key={j.id}
-                    className={`bg-white border overflow-hidden flex flex-col sm:flex-row ${isRecommended ? "border-[#1B3A5C] shadow-[4px_4px_0_#1B3A5C]" : "border-[#E8E0D1]"} ${isRecommended ? "scale-[1.01]" : ""}`}
+                    className={`bg-white border transition-all duration-150 ${
+                      isRecommended
+                        ? "border-[#1B3A5C] shadow-[3px_3px_0_#1B3A5C]"
+                        : "border-[#E8E0D1] hover:border-[#1B3A5C] shadow-sm"
+                    }`}
                   >
-                    {/* left/top edge color strip */}
-                    <div className="h-[4px] sm:h-auto sm:w-[6px] shrink-0" style={{ background: isDirect ? "#0E9F4B" : (RISK_COLOR[risk] ?? "#1B3A5C") }} />
-                    <div className={`flex-1 ${isRecommended ? "p-4 sm:p-5" : "p-4"}`}>
-                      {/* Top Sublabel & Category Tags */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-2 border-b border-[#FAF7F0]">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {isDirect ? (
-                            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#0E9F4B] text-white px-2 py-0.5 shadow-sm">
-                              <Sparkles className="w-3 h-3 text-[#F2B705]" /> DIRECT TRAIN · NO INTERCHANGE
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#1B3A5C] text-[#FAF7F0] px-2 py-0.5">
-                              <Route className="w-3 h-3 text-[#F2B705]" /> 1 CHANGE · VIA {getStationName(transfer?.fromStationId).toUpperCase()}
-                            </span>
-                          )}
-                          {isRecommended && (
-                            <span className="font-display text-[10px] tracking-[0.14em] bg-[#F2B705] text-[#1B3A5C] border border-[#1B3A5C] px-1.5 py-0.5 font-bold">
-                              RECOMMENDED
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="font-display text-[11px] tracking-[0.14em] text-[#5C6B80]">{label}</span>
-                          <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-wide text-white px-2 py-0.5" style={{ background: isDirect ? "#0E9F4B" : RISK_COLOR[risk] }}>
-                            <span className="w-1.5 h-1.5 rounded-full bg-white" /> {isDirect ? "ZERO RISK" : RISK_LABEL[risk].toUpperCase()}
+                    {/* Top Flight-Style Status Bar */}
+                    <div className="bg-[#FAF7F0] border-b border-[#E8E0D1] px-4 py-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isRecommended && (
+                          <span className="font-display text-[10px] tracking-wider bg-[#F2B705] text-[#1B3A5C] px-2 py-0.5 font-bold border border-[#1B3A5C]">
+                            RECOMMENDED
                           </span>
-                        </div>
-                      </div>
-
-                      {/* Header: Stations & Timings */}
-                      <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <div>
-                          <div className="font-display text-[16px] sm:text-[18px] tracking-wide text-[#1B3A5C]">
-                            {j.origin.name.toUpperCase()} ({originCode}) → {j.destination.name.toUpperCase()} ({destCode})
-                          </div>
-                          <div className="font-mono text-[12px] font-bold text-[#1B3A5C] mt-0.5 flex items-center gap-2">
-                            <span>{departureTime}</span>
-                            <ArrowRight className="w-3.5 h-3.5 text-[#5C6B80]" />
-                            <span>{arrivalTime} {legs.length > 1 || legs[0]?.dayOffset ? `(+${legs[legs.length - 1]?.dayOffset || 1} day)` : ""}</span>
-                            <span className="font-normal text-[11px] text-[#5C6B80]">· {formatDateShort(date).toUpperCase()}</span>
-                          </div>
-                        </div>
-
-                        {/* Prominent Price & Duration Header Callout */}
-                        <div className="text-right">
-                          <div className="font-display text-[18px] sm:text-[20px] text-[#1B3A5C] leading-none">
-                            ₹{j.totalCost.toLocaleString("en-IN")}
-                          </div>
-                          <div className="font-mono text-[10px] text-[#5C6B80] mt-0.5">AC 3-TIER EST.</div>
-                        </div>
-                      </div>
-
-                      {/* Train Numbers & Names Badge */}
-                      <div className="mt-2.5 bg-[#FAF7F0] border border-[#E8E0D1] px-2.5 py-1.5 font-mono text-[11px] text-[#1B3A5C] flex flex-wrap items-center gap-1.5">
-                        <TrainFront className="w-3.5 h-3.5 text-[#1B3A5C] shrink-0" />
-                        {legs.map((l: any, i: number) => (
-                          <span key={i} className="inline-flex items-center gap-1">
-                            <span className="font-bold">{l.train.number}</span> {l.train.name}
-                            {i < legs.length - 1 && <span className="text-[#5C6B80] font-bold mx-1">➔</span>}
+                        )}
+                        {isDirect ? (
+                          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#E8F5E9] text-[#0E9F4B] border border-[#0E9F4B]/30 px-2 py-0.5">
+                            <Sparkles className="w-3 h-3 text-[#0E9F4B]" /> DIRECT · NON-STOP
                           </span>
-                        ))}
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold tracking-wider bg-[#1B3A5C] text-white px-2 py-0.5">
+                            <Route className="w-3 h-3 text-[#F2B705]" /> 1 STOP · {formatDuration(transfer?.durationMinutes)} LAYOVER VIA {getStationName(transfer?.fromStationId).toUpperCase()} ({getStation(transfer?.fromStationId).code})
+                          </span>
+                        )}
+                        {!isDirect && (
+                          <span
+                            className="inline-flex items-center gap-1 font-mono text-[10px] text-white px-2 py-0.5 font-bold"
+                            style={{ background: RISK_COLOR[risk] || "#1B3A5C" }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                            {RISK_LABEL[risk]?.toUpperCase()}
+                          </span>
+                        )}
                       </div>
 
-                      {/* 3 Metric Cards: Duration, Route/Layover, Price */}
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 sm:p-2.5">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
-                            <Clock3 className="w-3 h-3" /> TOTAL DURATION
-                          </div>
-                          <div className="font-mono text-[13px] sm:text-[14px] font-bold text-[#1B3A5C] mt-1">
-                            {formatDuration(j.totalDurationMinutes).toUpperCase()}
-                          </div>
-                          <div className="font-mono text-[10px] text-[#5C6B80]">
-                            {isDirect ? "DIRECT ROUTE" : "INCL. LAYOVER"}
-                          </div>
-                        </div>
-
-                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 sm:p-2.5">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
-                            <ArrowLeftRight className="w-3 h-3" /> INTERCHANGE
-                          </div>
-                          <div className="font-mono text-[13px] sm:text-[14px] font-bold text-[#1B3A5C] mt-1">
-                            {isDirect ? "DIRECT" : "1 CHANGE"}
-                          </div>
-                          <div className="font-mono text-[10px] text-[#5C6B80] truncate">
-                            {transfer ? `${formatDuration(transfer.durationMinutes)} @ ${getStationName(transfer.fromStationId)}` : "NO STOPS"}
-                          </div>
-                        </div>
-
-                        <div className="border border-[#E8E0D1] bg-[#FAF7F0] p-2 sm:p-2.5">
-                          <div className="font-mono text-[10px] tracking-[0.12em] text-[#5C6B80] flex items-center justify-center gap-1">
-                            <IndianRupee className="w-3 h-3" /> TOTAL FARE
-                          </div>
-                          <div className="font-mono text-[13px] sm:text-[14px] font-bold text-[#1B3A5C] mt-1">
-                            ₹{j.totalCost.toLocaleString("en-IN")}
-                          </div>
-                          <div className="font-mono text-[10px] text-[#5C6B80]">AC 3-TIER</div>
-                        </div>
-                      </div>
-
-                      {transfer && (
-                        <div className="mt-3 border border-[#E8E0D1] bg-[#FAF7F0] p-2.5 sm:p-3 flex items-start gap-2">
-                          {risk === "low" ? (
-                            <ShieldCheck className="w-4 h-4 shrink-0 text-[#0E9F4B]" />
-                          ) : risk === "medium" ? (
-                            <ShieldAlert className="w-4 h-4 shrink-0 text-[#D98200]" />
-                          ) : (
-                            <OctagonAlert className="w-4 h-4 shrink-0 text-[#C62828]" />
-                          )}
-                          <div className="font-mono text-[11px] sm:text-[12px] leading-4">
-                            <span className="font-semibold text-[#1B3A5C]">{formatDuration(transfer.durationMinutes).toUpperCase()} LAYOVER:</span>
-                            <span className="text-[#5C6B80]"> {transfer.reason}</span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          onClick={() => {
-                            setSelected(j);
-                            setView("detail");
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                          }}
-                          className={`flex-1 inline-flex items-center justify-center gap-1.5 font-display text-[13px] tracking-[0.08em] py-2.5 border-[2px] transition ${isRecommended ? "bg-[#F2B705] text-[#1B3A5C] border-[#1B3A5C] shadow-[2px_2px_0_#1B3A5C]" : "bg-white text-[#1B3A5C] border-[#1B3A5C] hover:bg-[#FAF7F0]"}`}
+                      <div className="flex items-center gap-2 ml-auto">
+                        <span
+                          className="inline-flex items-center gap-1.5 font-mono text-[10px] font-bold px-2 py-0.5 border"
+                          style={{ background: seatStatus.bg, color: seatStatus.color, borderColor: seatStatus.color + "40" }}
                         >
-                          VIEW FULL TIMELINE <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => saveJourney(j)}
-                          className="px-3 border border-[#E8E0D1] bg-white text-[#1B3A5C] hover:bg-[#FAF7F0] grid place-items-center"
-                          aria-label="Save"
-                        >
-                          <Bookmark className="w-4 h-4" />
-                        </button>
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: seatStatus.color }} />
+                          {seatStatus.label}
+                        </span>
+                        <span className="font-display text-[11px] tracking-wider text-[#5C6B80]">{tagLabel}</span>
                       </div>
-                      {isRecommended && j.whyNotFaster && (
-                        <p className="font-mono text-[11px] text-[#5C6B80] mt-2 flex gap-1.5">
-                          <Info className="w-3 h-3 shrink-0 mt-0.5" /> {j.whyNotFaster}
-                        </p>
+                    </div>
+
+                    {/* Flight-Style Card Content */}
+                    <div className="p-4 sm:p-5">
+                      {/* Main Itinerary Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                        {/* 1. Train Branding / Carrier Column (md:col-span-3) */}
+                        <div className="md:col-span-3 flex items-start gap-2 min-w-0">
+                          <div className="w-10 h-10 rounded bg-[#1B3A5C] text-[#FAF7F0] grid place-items-center shrink-0 border border-[#0F2340]">
+                            <TrainFront className="w-5 h-5 text-[#F2B705]" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-mono text-[12px] font-bold text-[#1B3A5C] truncate flex items-center gap-1.5">
+                              <span className="bg-[#FAF7F0] border border-[#E8E0D1] px-1.5 py-0.5 text-[11px] text-[#1B3A5C]">
+                                #{legs[0]?.train.number}
+                              </span>
+                              <span className="truncate">{legs[0]?.train.name}</span>
+                            </div>
+                            {legs.length > 1 && (
+                              <div className="font-mono text-[11px] font-bold text-[#5C6B80] truncate mt-1 flex items-center gap-1">
+                                <span className="text-[#5C6B80]">➔</span>
+                                <span className="bg-[#FAF7F0] border border-[#E8E0D1] px-1 py-0.2 text-[10px] text-[#1B3A5C]">
+                                  #{legs[1]?.train.number}
+                                </span>
+                                <span className="truncate">{legs[1]?.train.name}</span>
+                              </div>
+                            )}
+                            <div className="font-mono text-[10px] text-[#5C6B80] mt-1 flex items-center gap-1.5">
+                              <span>Indian Railways</span>
+                              <span>·</span>
+                              <span className="text-[#1B3A5C] font-semibold">{getTrainCategory(legs[0]?.train.name || "")}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2. Horizontal Flight Timeline Track (md:col-span-6) */}
+                        <div className="md:col-span-6 flex items-center justify-between gap-2 px-1 sm:px-2 min-w-0">
+                          {/* Departure */}
+                          <div className="text-left min-w-0 shrink">
+                            <div className="font-mono text-[20px] sm:text-[22px] font-bold text-[#1B3A5C] leading-none">
+                              {departureTime}
+                            </div>
+                            <div className="font-mono text-[12px] font-bold text-[#1B3A5C] mt-1">
+                              {originCode}
+                            </div>
+                            <div className="font-mono text-[10px] text-[#5C6B80] truncate max-w-[85px] sm:max-w-[110px]" title={j.origin.name}>
+                              {j.origin.name}
+                            </div>
+                          </div>
+
+                          {/* Flight Track Bar with Duration */}
+                          <div className="flex-1 px-1 sm:px-2 text-center min-w-[60px]">
+                            <div className="font-mono text-[11px] text-[#5C6B80] font-semibold mb-1 flex items-center justify-center gap-1">
+                              <Clock3 className="w-3 h-3 text-[#5C6B80]" />
+                              {formatDuration(j.totalDurationMinutes)}
+                            </div>
+
+                            {/* Graphic Track Line */}
+                            <div className="relative flex items-center justify-center my-1.5">
+                              <div className="h-[2px] w-full bg-[#1B3A5C]/20" />
+                              {isDirect ? (
+                                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 border-t-2 border-r-2 border-[#1B3A5C] rotate-45" />
+                              ) : (
+                                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center">
+                                  <span className="w-3 h-3 rounded-full border-2 border-[#1B3A5C] shadow-xs" style={{ background: transfer?.connectionSafety === "safe" ? "#0E9F4B" : transfer?.connectionSafety === "moderate" ? "#D98200" : transfer?.connectionSafety === "risky" ? "#C62828" : "#F2B705" }} title={`Layover at ${getStationName(transfer?.fromStationId)}`} />
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="font-mono text-[10px] text-[#5C6B80] truncate">
+                              {isDirect ? (
+                                <span className="text-[#0E9F4B] font-bold">Non-stop</span>
+                              ) : (
+                                <span className="text-[#1B3A5C] font-semibold">
+                                  1 stop · {formatDuration(transfer?.durationMinutes)} in {getStation(transfer?.fromStationId).code}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Arrival */}
+                          <div className="text-right min-w-0 shrink">
+                            <div className="font-mono text-[20px] sm:text-[22px] font-bold text-[#1B3A5C] leading-none flex items-center justify-end gap-1">
+                              <span>{arrivalTime}</span>
+                              {(legs.length > 1 || (legs[0]?.dayOffset ?? 0) > 0) ? (
+                                <sup className="text-[10px] font-bold text-[#C62828] bg-[#FFEBEE] px-1 py-0.2 rounded leading-none">
+                                  +{legs[legs.length - 1]?.dayOffset || 1}d
+                                </sup>
+                              ) : null}
+                            </div>
+                            <div className="font-mono text-[12px] font-bold text-[#1B3A5C] mt-1">
+                              {destCode}
+                            </div>
+                            <div className="font-mono text-[10px] text-[#5C6B80] truncate max-w-[85px] sm:max-w-[110px]" title={j.destination.name}>
+                              {j.destination.name}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 3. Fare & Action Buttons (md:col-span-3) */}
+                        <div className="md:col-span-3 flex md:flex-col items-center md:items-end justify-between gap-2 pt-3 md:pt-0 border-t md:border-t-0 border-[#E8E0D1] min-w-0">
+                          <div className="text-left md:text-right">
+                            <div className="font-display text-[22px] sm:text-[26px] text-[#1B3A5C] leading-none font-bold">
+                              ₹{calculatedFare.toLocaleString("en-IN")}
+                            </div>
+                            <div className="font-mono text-[10px] text-[#5C6B80] mt-0.5 tracking-wider uppercase">
+                              {currentClass === "sleeper" ? "Sleeper Class" : currentClass === "ac2" ? "AC 2-Tier" : "AC 3-Tier"}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setExpandedJourneyId(isExpanded ? null : j.id)}
+                              className="px-2.5 py-1.5 border border-[#1B3A5C] text-[#1B3A5C] font-mono text-[11px] hover:bg-[#FAF7F0] transition flex items-center gap-1"
+                            >
+                              <span>{isExpanded ? "Hide Details" : "Flight Details"}</span>
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setSelected(j);
+                                setView("detail");
+                                window.scrollTo({ top: 0, behavior: "smooth" });
+                              }}
+                              className="px-3 py-1.5 bg-[#F2B705] text-[#1B3A5C] border border-[#1B3A5C] font-display text-[12px] tracking-wider hover:brightness-105 transition shadow-sm font-bold flex items-center gap-1"
+                            >
+                              SELECT <ArrowRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Travel Class Options (Interactive Fare Switcher) */}
+                      <div className="mt-3.5 pt-2.5 border-t border-[#FAF7F0] flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[10px] text-[#5C6B80] uppercase tracking-wider mr-1">Class:</span>
+                          {(["sleeper", "ac3", "ac2"] as const).map((cls) => {
+                            const fare = legs.reduce((acc: number, l: any) => acc + (l.train.fare?.[cls] || l.train.fare?.ac3 || 1200), 0);
+                            const isSelected = currentClass === cls;
+                            return (
+                              <button
+                                key={cls}
+                                onClick={() => setSelectedClasses((prev) => ({ ...prev, [j.id]: cls }))}
+                                className={`font-mono text-[10px] px-2.5 py-1 border transition flex items-center gap-1.5 ${
+                                  isSelected
+                                    ? "bg-[#1B3A5C] text-[#FAF7F0] border-[#1B3A5C] font-bold shadow-xs"
+                                    : "bg-[#FAF7F0] text-[#1B3A5C] border-[#E8E0D1] hover:border-[#1B3A5C]"
+                                }`}
+                              >
+                                <span>{cls === "sleeper" ? "SL" : cls === "ac3" ? "3A" : "2A"}</span>
+                                <span className={isSelected ? "text-[#F2B705]" : "text-[#5C6B80]"}>₹{fare}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex items-center gap-3 font-mono text-[10px] text-[#5C6B80]">
+                          <span className="inline-flex items-center gap-1">
+                            <ShieldCheck className="w-3 h-3 text-[#0E9F4B]" /> {j.safetyScore}% Safety Score
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Zap className="w-3 h-3 text-[#D98200]" /> {legs[0]?.train.reliability}% On-time
+                          </span>
+                          <button
+                            onClick={() => saveJourney(j)}
+                            className="text-[#1B3A5C] hover:text-[#0F2340] inline-flex items-center gap-1 p-1 hover:bg-[#FAF7F0]"
+                            title="Save journey"
+                          >
+                            <Bookmark className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expandable Flight-Style Itinerary Accordion */}
+                      {isExpanded && (
+                        <div className="mt-4 pt-4 border-t border-[#E8E0D1] bg-[#FAF7F0]/60 p-3 sm:p-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <div className="font-display text-[12px] tracking-[0.14em] text-[#1B3A5C] mb-3 flex items-center justify-between">
+                            <span>FLIGHT-STYLE TRAIN ITINERARY</span>
+                            <span className="font-mono text-[10px] text-[#5C6B80] font-normal">OPERATED BY INDIAN RAILWAYS</span>
+                          </div>
+
+                          <div className="space-y-4">
+                            {/* Leg 1 */}
+                            <div className="bg-white border border-[#E8E0D1] p-3.5 shadow-xs">
+                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-[#FAF7F0]">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-6 h-6 rounded bg-[#1B3A5C] text-[#FAF7F0] grid place-items-center font-mono text-[10px] font-bold">1</span>
+                                  <span className="font-display text-[13px] text-[#1B3A5C] font-bold">
+                                    {legs[0]?.train.number} · {legs[0]?.train.name.toUpperCase()}
+                                  </span>
+                                </div>
+                                <span className="font-mono text-[10px] bg-[#FAF7F0] border border-[#E8E0D1] px-2 py-0.5 text-[#5C6B80]">
+                                  {getTrainCategory(legs[0]?.train.name || "")} · {legs[0]?.train.reliability}% On-time
+                                </span>
+                              </div>
+
+                              <div className="relative pl-6 space-y-3">
+                                <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-[#1B3A5C]/30" />
+                                {/* Origin stop */}
+                                <div className="relative">
+                                  <span className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-[#1B3A5C] border-2 border-white ring-1 ring-[#1B3A5C]" />
+                                  <div className="flex justify-between items-baseline gap-2">
+                                    <div className="font-mono text-[12px] font-bold text-[#1B3A5C]">
+                                      {legs[0]?.departure} · {legs[0]?.from.name} ({legs[0]?.from.code})
+                                    </div>
+                                    <span className="font-mono text-[10px] text-[#5C6B80]">
+                                      Platform {legs[0]?.train.stops?.find((s: any) => s.stationId === legs[0].from.id)?.platform || "1"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="font-mono text-[10px] text-[#5C6B80] py-1">
+                                  Duration: {formatDuration(legs[0]?.train.durationMinutes || 0)} · SL ₹{legs[0]?.train.fare?.sleeper || 450} / 3A ₹{legs[0]?.train.fare?.ac3 || 1200} / 2A ₹{legs[0]?.train.fare?.ac2 || 1700}
+                                </div>
+
+                                {/* Intermediate arrival stop */}
+                                <div className="relative">
+                                  <span className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-white border-2 border-[#1B3A5C]" />
+                                  <div className="flex justify-between items-baseline gap-2">
+                                    <div className="font-mono text-[12px] font-bold text-[#1B3A5C]">
+                                      {legs[0]?.arrival} · {legs[0]?.to.name} ({legs[0]?.to.code})
+                                    </div>
+                                    <span className="font-mono text-[10px] text-[#5C6B80]">
+                                      Platform {legs[0]?.train.stops?.find((s: any) => s.stationId === legs[0].to.id)?.platform || "2"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Amenities Row */}
+                              <div className="mt-3 pt-2.5 border-t border-[#FAF7F0] flex flex-wrap items-center gap-3 font-mono text-[10px] text-[#5C6B80]">
+                                <span className="inline-flex items-center gap-1">
+                                  <Utensils className="w-3 h-3 text-[#1B3A5C]" /> Pantry & E-Catering
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <Zap className="w-3 h-3 text-[#1B3A5C]" /> Charging Sockets
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <Luggage className="w-3 h-3 text-[#1B3A5C]" /> Bedroll Available (AC)
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Connecting Layover Banner (The Flight Layover Banner) */}
+                            {transfer && (
+                              <div className={`border border-dashed p-3 flex items-start gap-2.5 ${transfer.connectionSafety === 'safe' ? 'border-[#0E9F4B]/40 bg-[#E8F5E9]' : transfer.connectionSafety === 'moderate' ? 'border-[#D98200]/40 bg-[#FFF8E1]' : transfer.connectionSafety === 'risky' ? 'border-[#C62828]/40 bg-[#FFEBEE]' : 'border-[#1B3A5C]/40 bg-[#FFFDE7]'}`}>
+                                <Clock3 className={`w-4 h-4 shrink-0 mt-0.5 ${transfer.connectionSafety === 'safe' ? 'text-[#0E9F4B]' : transfer.connectionSafety === 'moderate' ? 'text-[#D98200]' : transfer.connectionSafety === 'risky' ? 'text-[#C62828]' : 'text-[#D98200]'}`} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-display text-[12px] tracking-wide text-[#1B3A5C] flex flex-wrap items-center justify-between gap-1">
+                                    <span>
+                                      {formatDuration(transfer.durationMinutes).toUpperCase()} LAYOVER IN {getStationName(transfer.fromStationId).toUpperCase()} ({getStation(transfer.fromStationId).code})
+                                    </span>
+                                    <span
+                                      className="font-mono text-[10px] px-1.5 py-0.2 text-white font-bold"
+                                      style={{ background: transfer.connectionSafety === 'safe' ? '#0E9F4B' : transfer.connectionSafety === 'moderate' ? '#D98200' : transfer.connectionSafety === 'risky' ? '#C62828' : '#1B3A5C' }}
+                                    >
+                                      {transfer.safetyBadge || RISK_LABEL[risk]?.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <p className="font-mono text-[11px] text-[#5C6B80] mt-1 leading-4 font-semibold text-[#1B3A5C]">
+                                    {transfer.platformGuidance || (transfer.requiresStationChange ? `Road transfer required (~${transfer.requiredWalkingMinutes} min)` : `Same station transfer. Walk ~${transfer.requiredWalkingMinutes} min`)}
+                                  </p>
+                                  <p className="font-mono text-[10px] text-[#5C6B80] mt-0.5 leading-3">
+                                    {transfer.reason} {transfer.delayProbability !== undefined && `| Delay Risk: ${transfer.delayProbability}%`}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Leg 2 (if connecting) */}
+                            {legs.length > 1 && (
+                              <div className="bg-white border border-[#E8E0D1] p-3.5 shadow-xs">
+                                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-[#FAF7F0]">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-6 h-6 rounded bg-[#1B3A5C] text-[#FAF7F0] grid place-items-center font-mono text-[10px] font-bold">2</span>
+                                    <span className="font-display text-[13px] text-[#1B3A5C] font-bold">
+                                      {legs[1]?.train.number} · {legs[1]?.train.name.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <span className="font-mono text-[10px] bg-[#FAF7F0] border border-[#E8E0D1] px-2 py-0.5 text-[#5C6B80]">
+                                    {getTrainCategory(legs[1]?.train.name || "")} · {legs[1]?.train.reliability}% On-time
+                                  </span>
+                                </div>
+
+                                <div className="relative pl-6 space-y-3">
+                                  <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-[#1B3A5C]/30" />
+                                  <div className="relative">
+                                    <span className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-[#1B3A5C] border-2 border-white ring-1 ring-[#1B3A5C]" />
+                                    <div className="flex justify-between items-baseline gap-2">
+                                      <div className="font-mono text-[12px] font-bold text-[#1B3A5C]">
+                                        {legs[1]?.departure} · {legs[1]?.from.name} ({legs[1]?.from.code})
+                                      </div>
+                                      <span className="font-mono text-[10px] text-[#5C6B80]">
+                                        Platform {legs[1]?.train.stops?.find((s: any) => s.stationId === legs[1].from.id)?.platform || "3"}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="font-mono text-[10px] text-[#5C6B80] py-1">
+                                    Duration: {formatDuration(legs[1]?.train.durationMinutes || 0)} · SL ₹{legs[1]?.train.fare?.sleeper || 450} / 3A ₹{legs[1]?.train.fare?.ac3 || 1200} / 2A ₹{legs[1]?.train.fare?.ac2 || 1700}
+                                  </div>
+
+                                  <div className="relative">
+                                    <span className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-[#0E9F4B] border-2 border-white ring-1 ring-[#0E9F4B]" />
+                                    <div className="flex justify-between items-baseline gap-2">
+                                      <div className="font-mono text-[12px] font-bold text-[#1B3A5C]">
+                                        {legs[1]?.arrival} · {legs[1]?.to.name} ({legs[1]?.to.code})
+                                      </div>
+                                      <span className="font-mono text-[10px] text-[#5C6B80]">
+                                        Platform {legs[1]?.train.stops?.find((s: any) => s.stationId === legs[1].to.id)?.platform || "1"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 pt-2.5 border-t border-[#FAF7F0] flex flex-wrap items-center gap-3 font-mono text-[10px] text-[#5C6B80]">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Utensils className="w-3 h-3 text-[#1B3A5C]" /> Pantry & E-Catering
+                                  </span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <Zap className="w-3 h-3 text-[#1B3A5C]" /> Charging Sockets
+                                  </span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <Luggage className="w-3 h-3 text-[#1B3A5C]" /> Bedroll Available (AC)
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Quick Bottom Actions inside accordion */}
+                          <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-[#E8E0D1]">
+                            <button
+                              onClick={() => {
+                                setSelected(j);
+                                setView("detail");
+                                window.scrollTo({ top: 0, behavior: "smooth" });
+                              }}
+                              className="font-mono text-[11px] text-[#1B3A5C] hover:underline flex items-center gap-1"
+                            >
+                              Open Full Journey View <ChevronRight className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => saveJourney(j)}
+                              className="px-2.5 py-1 border border-[#E8E0D1] bg-white font-mono text-[10px] text-[#1B3A5C] hover:bg-[#FAF7F0] flex items-center gap-1"
+                            >
+                              <Bookmark className="w-3 h-3" /> Save Itinerary
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   </div>
                 );
               })}
+            </div>
+            <div className="mt-4 border border-[#E8E0D1] bg-white p-3 flex gap-2 font-mono text-[11px] leading-4 text-[#5C6B80]">
+              <Info className="w-4 h-4 shrink-0 text-[#1B3A5C]" />
+              Prototype uses synthetic train & delay data — not live availability. Fares are estimates for AC 3-tier on selected date.
             </div>
           </div>
         )}
@@ -1197,7 +1258,7 @@ export default function Home() {
                                 {(leg as any).from.name.toUpperCase()}
                               </div>
                               <div className="font-mono text-[11px] text-[#5C6B80] mt-1">
-                                {(leg as any).from.code} · PLATFORM {(leg as any).train.stops.find((s: any) => s.stationId === (leg as any).from.id)?.platform ?? "—"}
+                                {(leg as any).from.code} · PLATFORM {(leg as any).train.stops?.find((s: any) => s.stationId === (leg as any).from.id)?.platform ?? "1"}
                               </div>
                             </div>
                             <span className="font-mono text-[11px] bg-[#FAF7F0] border border-[#E8E0D1] px-2 py-1 inline-flex items-center gap-1 shrink-0">
@@ -1206,8 +1267,8 @@ export default function Home() {
                           </div>
                           <div className="mt-2 ml-1 border-l border-dashed border-[#E8E0D1] pl-3 py-2">
                             <div className="font-mono text-[11px] text-[#5C6B80] leading-4">
-                              ON BOARD {formatDuration((leg as any).train.durationMinutes).toUpperCase()} · SL ₹{(leg as any).train.fare.sleeper} · 3A ₹{(leg as any).train.fare.ac3} ·{" "}
-                              {(leg as any).train.reliability}% ON-TIME · AVG {(leg as any).train.avgDelay}M
+                              ON BOARD {formatDuration((leg as any).train.durationMinutes).toUpperCase()} · SL ₹{(leg as any).train.fare?.sleeper || 450} · 3A ₹{(leg as any).train.fare?.ac3 || 1200} ·{" "}
+                              {(leg as any).train.reliability}% ON-TIME · AVG {(leg as any).train.avgDelay || 15}M
                             </div>
                           </div>
                           <div className="flex justify-between items-start mt-2 gap-4">
@@ -1220,7 +1281,7 @@ export default function Home() {
                               </div>
                               <div className="font-mono text-[11px] text-[#5C6B80] mt-1">{(leg as any).to.code}</div>
                             </div>
-                            <span className="font-mono text-[10px] tracking-wide text-[#5C6B80]">{(leg as any).train.days.join(" · ")}</span>
+                            <span className="font-mono text-[10px] tracking-wide text-[#5C6B80]">{(leg as any).train.days?.join(" · ") || "Daily"}</span>
                           </div>
                         </div>
                       );
@@ -1349,6 +1410,27 @@ export default function Home() {
               </div>
             </div>
 
+            <div className="mt-4 bg-white border border-[#E8E0D1] p-4">
+              <div className="font-display text-[11px] tracking-[0.16em] text-[#5C6B80]">JOURNEY OBJECT — PLATFORM-READY</div>
+              <pre className="mt-2 font-mono text-[11px] bg-[#FAF7F0] border border-[#E8E0D1] p-3 overflow-auto leading-4">
+                {JSON.stringify(
+                  {
+                    origin: selected.origin.name,
+                    destination: selected.destination.name,
+                    date: selected.date,
+                    legs: selected.legs.map((l) =>
+                      l.type === "train"
+                        ? { mode: "rail", from: (l as any).from.name, to: (l as any).to.name, departure: (l as any).departure, arrival: (l as any).arrival }
+                        : { mode: "transfer", station: getStationName((l as any).transfer.fromStationId), duration_minutes: (l as any).transfer.durationMinutes, risk: (l as any).transfer.risk }
+                    ),
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+              <p className="font-mono text-[11px] text-[#5C6B80] mt-2">FUTURE: RAIL → METRO → BUS → LAST-MILE FROM ONE OBJECT.</p>
+            </div>
+
             <div className="mt-4 border border-[#E8E0D1] bg-[#FAF7F0] p-4 text-center">
               <div className="font-display text-[14px] tracking-wide">READY TO BOOK?</div>
               <p className="text-[13px] text-[#5C6B80] mt-1 leading-4">Raasta has planned your journey. Booking happens via the railway booking service.</p>
@@ -1361,6 +1443,7 @@ export default function Home() {
               >
                 CONTINUE TO BOOKING <ArrowRight className="w-3.5 h-3.5" />
               </button>
+              <p className="font-mono text-[10px] tracking-wide text-[#5C6B80] mt-2">MOCKED — NO REAL PAYMENT OR TRANSACTION.</p>
             </div>
           </div>
         )}
@@ -1617,84 +1700,105 @@ export default function Home() {
           </div>
         )}
 
-        {/* WhatsApp Bot Demo Modal — interactive, never stuck */}
-        {showWhatsAppDemo && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div onClick={() => setShowWhatsAppDemo(false)} className="absolute inset-0 bg-[#1B3A5C]/60 backdrop-blur-sm" />
-            <div className="relative w-full max-w-[420px] bg-[#E7FFDB] border-[2px] border-[#1B3A5C] shadow-[6px_6px_0_#1B3A5C] flex flex-col max-h-[85vh]">
-              <div className="bg-[#075E54] text-white px-4 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-white grid place-items-center"><MessageCircle className="w-5 h-5 text-[#075E54] fill-current" /></div>
-                  <div>
-                    <div className="font-display text-[13px] tracking-wide">RAASTA WHATSAPP BOT</div>
-                    <div className="font-mono text-[11px] opacity-80">+1 415 523 8886 · instant build</div>
-                  </div>
-                </div>
-                <button onClick={() => setShowWhatsAppDemo(false)} className="w-7 h-7 bg-white text-[#075E54] grid place-items-center"><X className="w-4 h-4" /></button>
-              </div>
-              <div className="flex-1 overflow-auto p-3 space-y-2 bg-[#E7FFDB] min-h-[280px]">
-                {waMessages.map((m, i) => (
-                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[82%] px-3 py-2 font-mono text-[12px] leading-4 border ${m.role === "user" ? "bg-[#DCF8C6] border-[#075E54]/20 rounded-l-lg rounded-br-lg" : "bg-white border-[#E8E0D1] rounded-r-lg rounded-bl-lg shadow-sm"}`}>
-                      <div>{m.text}</div>
-                      {m.journey && (
-                        <button
-                          onClick={() => {
-                            setSelected(m.journey!);
-                            setView("detail");
-                            setShowWhatsAppDemo(false);
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                          }}
-                          className="mt-2 w-full bg-[#1B3A5C] text-white py-1.5 font-mono text-[11px] tracking-wide"
-                        >
-                          VIEW JOURNEY →
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="bg-white border-t border-[#E8E0D1] p-2 flex gap-2">
-                <input
-                  value={waInput}
-                  onChange={(e) => setWaInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleWaSend(); }}
-                  placeholder="Type: Delhi to Jaipur tomorrow"
-                  className="flex-1 border border-[#E8E0D1] px-3 py-2 font-mono text-[13px] outline-none focus:border-[#25D366]"
-                />
-                <button onClick={handleWaSend} className="bg-[#25D366] text-white px-4 py-2 font-mono text-[12px] font-bold hover:bg-[#20bd5a]">SEND</button>
-              </div>
-              <div className="bg-[#1B3A5C] text-[#FAF7F0]/70 font-mono text-[10px] px-3 py-1.5 text-center">Built with timeout & retry — never stuck midway · Try Hinglish “Delhi se Goa kal fastest”</div>
-            </div>
-          </div>
-        )}
-
-        {/* Floating Real WhatsApp Action Pill */}
-        <div className="fixed bottom-5 right-5 z-40">
-          <a
-            href="https://wa.me/14155238886?text=Delhi%20to%20Goa%20tomorrow"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-[#25D366] hover:bg-[#20bd5a] text-[#075E54] p-3 sm:px-4 sm:py-2.5 rounded-full shadow-[0_4px_14px_rgba(37,211,102,0.4)] flex items-center gap-2 border-2 border-white transition-all transform hover:scale-105 active:scale-95 font-bold"
-            title="Chat or send voice note on WhatsApp (+1 415 523 8886)"
-          >
-            <MessageCircle className="w-5 h-5 fill-current" />
-            <span className="hidden sm:inline font-mono text-xs tracking-wider">
-              CHAT ON WHATSAPP
-            </span>
-            <span className="w-2 h-2 rounded-full bg-[#075E54] animate-ping" />
-          </a>
-        </div>
-
         {toast && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#1B3A5C] text-white font-mono text-[12px] tracking-wide px-4 py-2 border border-[#F2B705] z-50">{toast}</div>}
       </main>
 
-      <footer className="border-t-[3px] border-[#1B3A5C] bg-white mt-auto py-5">
-        <div className="max-w-[1180px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 font-mono text-[11px] text-[#5C6B80]">
-          <div className="font-display text-[13px] tracking-wide text-[#1B3A5C]">RAASTA · JOURNEY PLANNER</div>
-          <div>Synthetic demonstration data for Indian Railways</div>
+      <footer className="border-t-[3px] border-[#1B3A5C] bg-white mt-auto">
+        <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-6">
+          <div className="flex flex-col sm:flex-row gap-4 justify-between">
+            <div className="max-w-[600px]">
+              <div className="font-display text-[12px] tracking-[0.12em] text-[#1B3A5C]">PROTOTYPE INFORMATION</div>
+              <p className="font-mono text-[11px] leading-4 text-[#5C6B80] mt-2">
+                Raasta is an independent prototype and is not an official Indian Railways or government product. Train schedules, fares, delay information and availability shown are synthetic and used only for demonstration. No real passenger information, payment details, OTPs or government systems are used.
+              </p>
+              <p className="font-mono text-[11px] leading-4 text-[#5C6B80] mt-2">
+                OpenAI is used as an explanation layer to convert structured journey data into simple language. The model does not invent train information. Fallback explanations are deterministic.
+              </p>
+            </div>
+            <div className="sm:text-right font-mono text-[11px] leading-4 text-[#5C6B80]">
+              <div className="font-display text-[11px] tracking-[0.12em] text-[#1B3A5C]">BUILT FOR HACKATHON</div>
+              <div className="mt-1">PLAN THE JOURNEY, NOT THE TRAIN.</div>
+              <div className="mt-1">SYNTHETIC DATA · MOCK BOOKING · FUTURE MOBILITY CONCEPTS</div>
+            </div>
+          </div>
         </div>
       </footer>
+
+      {/* Fullscreen Immersive Loading Overlay */}
+      {isSearching && (
+        <div className="fixed inset-0 z-[100] bg-[#1B3A5C]/95 backdrop-blur-md flex flex-col items-center justify-center transition-all duration-300">
+          {/* Scanning Grid / Network Visualization */}
+          <div className="absolute inset-0 overflow-hidden opacity-20 pointer-events-none">
+            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-[#F2B705] blur-[1px]"></div>
+            <div className="absolute top-0 left-1/2 w-[1px] h-full bg-[#F2B705] blur-[1px]"></div>
+            
+            {/* Radar sweeping effect */}
+            <div 
+              className="absolute top-1/2 left-1/2 w-[150vw] h-[150vh] origin-top-left bg-gradient-to-br from-[#F2B705]/40 to-transparent"
+              style={{
+                transform: "translate(-50%, -50%) rotate(0deg)",
+                animation: "spin 3s linear infinite"
+              }}
+            ></div>
+          </div>
+
+          {/* Center content */}
+          <div className="relative z-10 flex flex-col items-center max-w-lg w-full px-6 text-center">
+            <div className="w-24 h-24 rounded-full border-4 border-[#F2B705]/20 border-t-[#F2B705] animate-spin mb-8 flex items-center justify-center">
+              <TrainFront className="w-10 h-10 text-white animate-pulse" />
+            </div>
+            
+            <h2 className="text-3xl sm:text-4xl font-display tracking-[0.2em] text-[#F2B705] mb-4">
+              ROUTING ENGINE
+            </h2>
+            
+            <div className="bg-[#0D2136] p-5 rounded-sm border border-[#3a6794] w-full text-left font-mono shadow-2xl">
+              <div className="flex justify-between text-[#8ab4f8] text-[10px] sm:text-xs mb-3">
+                <span>STATUS: ACTIVE</span>
+                <span className="animate-pulse text-[#F2B705]">SCANNING NETWORK...</span>
+              </div>
+              <div className="h-1.5 w-full bg-[#1B3A5C] rounded-full overflow-hidden mb-4 relative">
+                <div 
+                  className="absolute top-0 left-0 h-full bg-[#F2B705]" 
+                  style={{ 
+                    width: "40%", 
+                    animation: "pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite, slideRight 2s ease-in-out infinite alternate" 
+                  }} 
+                />
+                <style dangerouslySetInnerHTML={{__html: `
+                  @keyframes slideRight {
+                    from { left: 0%; }
+                    to { left: 60%; }
+                  }
+                `}} />
+              </div>
+              <ul className="text-white/70 text-[10px] sm:text-xs space-y-2">
+                <li className="flex items-center gap-3">
+                  <span className="inline-flex w-2 h-2 justify-center items-center">
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-[#F2B705] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#F2B705]"></span>
+                  </span>
+                  Processing 11,000+ trains & schedules
+                </li>
+                <li className="flex items-center gap-3">
+                  <span className="inline-flex w-2 h-2 justify-center items-center">
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-[#F2B705] opacity-75" style={{animationDelay: "0.4s"}}></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#F2B705]"></span>
+                  </span>
+                  Evaluating junction bounding boxes
+                </li>
+                <li className="flex items-center gap-3">
+                  <span className="inline-flex w-2 h-2 justify-center items-center">
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-[#F2B705] opacity-75" style={{animationDelay: "0.8s"}}></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#F2B705]"></span>
+                  </span>
+                  Calculating optimal recovery buffers
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

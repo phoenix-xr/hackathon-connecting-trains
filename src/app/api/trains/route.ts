@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findJourneys } from "@/lib/engine";
 import { Preference } from "@/lib/types";
-import { getStation, searchStations } from "@/data/stations";
+import { getStation, getStationByName, searchStations } from "@/data/stations";
 
 /**
  * Trains & Availability API Route
@@ -17,8 +17,8 @@ export async function GET(req: NextRequest) {
   const date = searchParams.get("date") || new Date().toISOString().slice(0, 10);
   const pref = (searchParams.get("pref") as Preference) || "easy";
 
-  const originStation = getStation(from);
-  const destStation = getStation(to);
+  const originStation = getStationByName(from);
+  const destStation = getStationByName(to);
 
   if (!originStation || !destStation) {
     return NextResponse.json(
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Multi-leg journey routing & interchange computation
-  const journeys = findJourneys(originStation.name, destStation.name, date, pref);
+  const journeys = findJourneys(from, to, date, pref);
 
   return NextResponse.json({
     success: true,
