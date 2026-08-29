@@ -38,6 +38,7 @@ import {
   Utensils,
   Luggage,
   Armchair,
+  MessageCircle,
 } from "lucide-react";
 
 const CAROUSEL_SLIDES = [
@@ -1723,6 +1724,22 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* Floating Real WhatsApp Action Pill */}
+      <div className="fixed bottom-5 right-5 z-40">
+        <a
+          href="https://wa.me/14155238886?text=Delhi%20to%20Goa%20tomorrow"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-[#25D366] hover:bg-[#20bd5a] text-[#075E54] p-3 sm:px-4 sm:py-2.5 rounded-full shadow-[0_4px_14px_rgba(37,211,102,0.4)] flex items-center gap-2 border-2 border-white transition-all transform hover:scale-105 active:scale-95 font-bold"
+          title="Chat or send voice note on WhatsApp (+1 415 523 8886)"
+        >
+          <MessageCircle className="w-5 h-5 fill-current" />
+          <span className="hidden sm:inline font-mono text-[11px] tracking-wider">
+            CHAT ON WHATSAPP
+          </span>
+        </a>
+      </div>
 
       {/* Fullscreen Immersive Loading Overlay */}
       {isSearching && (
